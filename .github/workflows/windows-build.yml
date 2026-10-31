@@ -1,0 +1,56 @@
+# Builds a Windows x64 release of Lemon Studio and uploads lemonstudio.exe as a workflow
+# artifact; a push of a v* tag also attaches the zip to a GitHub Release. The app is
+# self-contained (every Lemon plugin is built in), so the exe alone is enough to run it.
+name: Windows Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Windows x64
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The time stretcher's and the ASIO SDK's bindings are generated at build time; the
+      # Windows image ships LLVM, whose libclang bindgen uses. ASIO builds from the SDK
+      # files in crates/os-app/asiosdk (.cargo/config.toml points cpal at them).
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build -p os-app --release --locked
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'lemonstudio'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item target/release/lemonstudio.exe $stage/
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath lemonstudio-windows-x64.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lemonstudio-windows-x64
+          path: lemonstudio-windows-x64.zip
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: lemonstudio-windows-x64.zip
